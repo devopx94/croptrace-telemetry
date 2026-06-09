@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+nameSuffix: -prod
+namespace: croptrace-prod
+
+resources:
+  - ../../base
+
+patches:
+  - path: patch-configmap.yaml
+  - path: patch-ingress.yaml
+  - path: patch-replicas.yaml
+  - path: patch-serviceaccount-external-secrets.yaml
+  - path: patch-secretstore.yaml
+  - path: patch-externalsecret.yaml
+  - path: patch-hpa.yaml
+
+images:
+  - name: docker.io/YOUR_DOCKERHUB_USERNAME/croptrace-api
+    newName: docker.io/YOUR_DOCKERHUB_USERNAME/croptrace-api
+    newTag: prod

@@ -1,0 +1,9 @@
+aws_region   = "ap-southeast-1"
+project_name = "croptrace"
+environment  = "dev"
+
+secret_values = {
+  DB_USER          = "croptrace"
+  DB_PASSWORD      = "replace-with-strong-password"
+  MONOLITH_API_KEY = "replace-with-monolith-api-key"
+}

@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: croptrace-api
+spec:
+  rules:
+    - host: croptrace-stage.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: croptrace-api-stage
+                port:
+                  number: 80

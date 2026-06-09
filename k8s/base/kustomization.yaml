@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: croptrace
+
+resources:
+  - namespace.yaml
+  - serviceaccount-external-secrets.yaml
+  - secretstore.yaml
+  - externalsecret.yaml
+  - configmap.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - api-ingress.yaml
+  - hpa.yaml
+  - postgres-service.yaml
+  - postgres-statefulset.yaml
+  - networkpolicy.yaml
+  - pdb.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: croptrace-telemetry
+  app.kubernetes.io/managed-by: kustomize

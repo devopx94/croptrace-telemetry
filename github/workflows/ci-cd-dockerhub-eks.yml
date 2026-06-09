@@ -1,0 +1,153 @@
+name: Build and Deploy CropTrace API to EKS
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "app/**"
+      - "k8s/**"
+      - ".github/workflows/ci-cd-dockerhub-eks.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_NAME: croptrace-api
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  EKS_CLUSTER_NAME: croptrace-dev-eks
+
+jobs:
+  build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      deploy_env: ${{ steps.meta.outputs.deploy_env }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve deployment environment and image tag
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            DEPLOY_ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref_name }}" == "main" ]]; then
+            DEPLOY_ENV="dev"
+          else
+            DEPLOY_ENV="dev"
+          fi
+
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          IMAGE_TAG="${DEPLOY_ENV}-${SHORT_SHA}"
+
+          echo "deploy_env=${DEPLOY_ENV}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image to Docker Hub
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: true
+          tags: |
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image_tag }}
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.deploy_env }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Amazon EKS using Kustomize
+    runs-on: ubuntu-latest
+    needs: build
+
+    environment: ${{ needs.build.outputs.deploy_env }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: Install Kustomize
+        shell: bash
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Update kubeconfig
+        shell: bash
+        run: |
+          aws eks update-kubeconfig             --region "${AWS_REGION}"             --name "${EKS_CLUSTER_NAME}"
+
+      - name: Update Kustomize image tag
+        shell: bash
+        run: |
+          cd "k8s/overlays/${{ needs.build.outputs.deploy_env }}"
+          kustomize edit set image             docker.io/YOUR_DOCKERHUB_USERNAME/croptrace-api=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
+
+      - name: Render Kubernetes manifests
+        shell: bash
+        run: |
+          kustomize build "k8s/overlays/${{ needs.build.outputs.deploy_env }}"
+
+      - name: Deploy to EKS
+        shell: bash
+        run: |
+          kubectl apply -k "k8s/overlays/${{ needs.build.outputs.deploy_env }}"
+
+      - name: Verify ExternalSecret sync
+        shell: bash
+        run: |
+          DEPLOY_ENV="${{ needs.build.outputs.deploy_env }}"
+          kubectl get externalsecret -n croptrace-${DEPLOY_ENV}
+          kubectl wait --for=condition=Ready externalsecret/croptrace-api-secret-${DEPLOY_ENV}             -n croptrace-${DEPLOY_ENV}             --timeout=120s
+
+      - name: Wait for API rollout
+        shell: bash
+        run: |
+          DEPLOY_ENV="${{ needs.build.outputs.deploy_env }}"
+          kubectl rollout status deployment/croptrace-api-${DEPLOY_ENV}             -n croptrace-${DEPLOY_ENV}             --timeout=180s
+
+      - name: Show deployment status
+        shell: bash
+        run: |
+          DEPLOY_ENV="${{ needs.build.outputs.deploy_env }}"
+          kubectl get pods -n croptrace-${DEPLOY_ENV}
+          kubectl get svc -n croptrace-${DEPLOY_ENV}
+          kubectl get ingress -n croptrace-${DEPLOY_ENV}

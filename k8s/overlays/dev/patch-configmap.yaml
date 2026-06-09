@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: croptrace-api-config
+data:
+  APP_NAME: croptrace-api-dev
+  LOG_LEVEL: DEBUG
+  DB_HOST: postgres-dev.croptrace-dev.svc.cluster.local
